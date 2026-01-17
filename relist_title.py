@@ -167,7 +167,7 @@ def lambda_handler(event, context):
             UpdateExpression='SET #status = :status, RelistedAt = :timestamp, RelistedAtISO = :timestamp_iso',
             ExpressionAttributeNames={'#status': 'Status'},
             ExpressionAttributeValues={
-                ':status': 'Listed',
+                ':status': 'Purchased',
                 ':timestamp': timestamp,
                 ':timestamp_iso': timestamp_iso
             }

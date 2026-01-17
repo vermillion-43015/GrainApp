@@ -17,9 +17,11 @@ def handler(event, context):
         .header { background: linear-gradient(135deg, #3d6ba8 0%, #2c5282 100%); color: white; padding: 30px; }
         .header h1 { font-size: 2.5em; margin-bottom: 10px; }
         .user-info { margin-top: 10px; background: rgba(255,255,255,0.15); padding: 15px; border-radius: 8px; }
+        .guest-banner { background: #fff3cd; color: #856404; padding: 12px 20px; text-align: center; font-weight: 600; border-bottom: 1px solid #ffc107; }
         .nav-buttons { display: flex; gap: 10px; padding: 20px; background: #f8f9fa; flex-wrap: wrap; }
         .nav-btn { padding: 12px 24px; border: none; border-radius: 8px; cursor: pointer; font-size: 1em; font-weight: 600; transition: all 0.3s; }
-        .nav-btn:hover { transform: translateY(-2px); box-shadow: 0 4px 8px rgba(0,0,0,0.2); }
+        .nav-btn:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 4px 8px rgba(0,0,0,0.2); }
+        .nav-btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none !important; box-shadow: none !important; }
         .btn-primary { background: #007bff; color: white; }
         .btn-success { background: #28a745; color: white; }
         .btn-warning { background: #ffc107; color: #000; }
@@ -63,8 +65,8 @@ def handler(event, context):
         .hash-hint { font-size: 0.85em; color: #666; font-style: italic; margin-top: 5px; }
         .price-hint { font-size: 0.85em; color: #666; margin-top: 5px; }
         .action-btn { padding: 10px 25px; border: none; border-radius: 8px; cursor: pointer; font-weight: 600; transition: all 0.3s; margin-right: 10px; }
-        .action-btn:hover { transform: translateY(-2px); box-shadow: 0 4px 8px rgba(0,0,0,0.2); }
-        .action-btn:disabled { background: #6c757d; cursor: not-allowed; transform: none; }
+        .action-btn:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 4px 8px rgba(0,0,0,0.2); }
+        .action-btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; box-shadow: none; }
         .buy-btn { background: #28a745; color: white; }
         .relist-btn { background: #17a2b8; color: white; }
         .user-indicator { background: #e7f3ff; border: 2px solid #007bff; padding: 12px 15px; border-radius: 8px; margin-bottom: 20px; display: flex; align-items: center; gap: 10px; }
@@ -92,6 +94,9 @@ def handler(event, context):
         .filter-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 15px; }
         .filter-bar h2 { color: #2c5282; margin: 0; }
         .filter-select { padding: 8px 12px; border: 2px solid #dee2e6; border-radius: 6px; font-size: 0.9em; cursor: pointer; }
+        .guest-login-prompt { background: #e7f3ff; border: 2px solid #007bff; border-radius: 10px; padding: 20px; text-align: center; margin: 20px 0; }
+        .guest-login-prompt h3 { color: #0056b3; margin-bottom: 10px; }
+        .guest-login-prompt p { color: #666; margin-bottom: 15px; }
     </style>
 </head>
 <body>
@@ -102,10 +107,13 @@ def handler(event, context):
                 <span id="userEmail"></span> | Role: <span id="userRole"></span>
             </div>
         </div>
+        <div id="guestBanner" class="guest-banner" style="display:none;">
+            You are browsing as a Guest. <a href="#" onclick="signInFromGuest()" style="color:#856404;text-decoration:underline;">Sign in</a> to buy, sell, or list titles.
+        </div>
         <div class="nav-buttons">
             <button class="nav-btn btn-primary" onclick="loadSales()">Marketplace</button>
-            <button class="nav-btn btn-purple" onclick="loadMyTitles()">My Titles</button>
-            <button class="nav-btn btn-success" onclick="showListSaleForm()">List New Sale</button>
+            <button class="nav-btn btn-purple" onclick="loadMyTitles()" id="myTitlesBtn">My Titles</button>
+            <button class="nav-btn btn-success" onclick="showListSaleForm()" id="listSaleBtn">List New Sale</button>
             <button class="nav-btn btn-warning" onclick="loadAdminStats()" id="adminBtn" style="display:none;">Admin Stats</button>
             <button class="nav-btn btn-danger" onclick="logout()">Logout</button>
         </div>
@@ -124,19 +132,34 @@ def handler(event, context):
     </div>
     <script>
         var token = sessionStorage.getItem("id_token");
+        var isGuest = sessionStorage.getItem("is_guest") === "true";
         var email = sessionStorage.getItem("user_email") || "";
         var role = sessionStorage.getItem("user_role") || "";
-        if (!token) { window.location.href = "/"; }
+        
+        // Redirect if not logged in and not guest
+        if (!token && !isGuest) { window.location.href = "/"; }
+        
+        // Update UI for guest mode
+        if (isGuest) {
+            document.getElementById("guestBanner").style.display = "block";
+            document.getElementById("myTitlesBtn").disabled = true;
+            document.getElementById("listSaleBtn").disabled = true;
+            email = "Guest";
+            role = "Guest";
+        }
+        
         document.getElementById("userEmail").textContent = email || "Unknown";
         document.getElementById("userRole").textContent = role || "User";
-        if (role === "Admin") { document.getElementById("adminBtn").style.display = "block"; }
+        if (role === "Admin" || isGuest) { document.getElementById("adminBtn").style.display = "block"; }
         var grainPrices = {"Corn": 4.85, "Wheat": 6.25, "Soybean": 13.50, "Oats": 3.75};
         
         loadSales();
 
         function loadAdminStats() {
             document.getElementById("content").innerHTML = '<div class="loading">Loading statistics...</div>';
-            fetch("/admin-stats", { headers: { "Authorization": token } })
+            var endpoint = isGuest ? "/public-admin-stats" : "/admin-stats";
+            var headers = isGuest ? {} : { "Authorization": token };
+            fetch(endpoint, { headers: headers })
             .then(function(res) { if (res.status === 403) { throw new Error("Forbidden"); } return res.json(); })
             .then(function(stats) {
                 var html = '<h2 style="color:#2c5282;margin-bottom:25px;">System Statistics</h2>';
@@ -147,7 +170,7 @@ def handler(event, context):
                 html += '<div class="item-card"><h3>Status Breakdown</h3><div class="item-details">';
                 html += '<div class="detail-row"><span class="detail-label">For Sale</span><span class="detail-value">' + stats.status_breakdown.for_sale + '</span></div>';
                 html += '</div></div>';
-                html += '<div class="item-card"><h3>Grain Distribution Transfers By Type</h3><div class="item-details">';
+                html += '<div class="item-card"><h3>Grain Distribution</h3><div class="item-details">';
                 for (var grain in stats.grain_type_breakdown) {
                     html += '<div class="detail-row"><span class="detail-label">' + grain + '</span><span class="detail-value">' + stats.grain_type_breakdown[grain] + '</span></div>';
                 }
@@ -162,10 +185,23 @@ def handler(event, context):
             .catch(function(err) { document.getElementById("content").innerHTML = '<div class="alert alert-danger">Error: ' + err.message + '</div>'; });
         }
 
+        function showGuestPrompt() {
+            var html = '<div class="guest-login-prompt">';
+            html += '<h3>Sign In Required</h3>';
+            html += '<p>You need to sign in to access this feature.</p>';
+            html += '<button onclick="signInFromGuest()" class="nav-btn btn-primary">Sign In</button>';
+            html += '</div>';
+            document.getElementById("content").innerHTML = html;
+        }
+
         function showHistoryModal(titleHash, grainType) {
             document.getElementById("modalHistoryContent").innerHTML = '<div class="loading">Loading history...</div>';
             document.getElementById("historyModal").style.display = "block";
-            fetch("/ownership-history", { method: "POST", headers: { "Content-Type": "application/json", "Authorization": token }, body: JSON.stringify({ title_hash: titleHash }) })
+            
+            var endpoint = isGuest ? "/public-ownership-history" : "/ownership-history";
+            var headers = isGuest ? { "Content-Type": "application/json" } : { "Content-Type": "application/json", "Authorization": token };
+            
+            fetch(endpoint, { method: "POST", headers: headers, body: JSON.stringify({ title_hash: titleHash }) })
             .then(function(res) { return res.json(); })
             .then(function(response) {
                 var history = response.ownership_history || [];
@@ -183,7 +219,7 @@ def handler(event, context):
                         html += '<div><span class="history-label">Price:</span> $' + (record.price || 0).toFixed(2) + '/bu</div>';
                         html += '<div><span class="history-label">Status:</span> ' + (record.status || "Unknown") + '</div>';
                         html += '<div><span class="history-label">Date:</span> ' + (record.timestamp_readable || "Unknown") + '</div>';
-                        html += '<div class="hash-info"><div class="hash-label">Hash:</div><div class="hash-value">' + record.hash + '</div></div>';
+                        html += '<div class="hash-info"><div class="hash-label">Title ID:</div><div class="hash-value">' + record.hash + '</div></div>';
                         html += '</div>';
                     });
                     html += '</div>';
@@ -197,7 +233,9 @@ def handler(event, context):
         window.onclick = function(event) { if (event.target == document.getElementById("historyModal")) { closeHistoryModal(); } };
 
         function validateTitle(titleHash, elementId) {
-            fetch("/validate-hash", { method: "POST", headers: { "Content-Type": "application/json", "Authorization": token }, body: JSON.stringify({ title_hash: titleHash, validate_full_chain: true }) })
+            var endpoint = isGuest ? "/public-validate-hash" : "/validate-hash";
+            var headers = isGuest ? { "Content-Type": "application/json" } : { "Content-Type": "application/json", "Authorization": token };
+            fetch(endpoint, { method: "POST", headers: headers, body: JSON.stringify({ title_hash: titleHash, validate_full_chain: true }) })
             .then(function(res) { return res.json(); })
             .then(function(data) {
                 var el = document.getElementById(elementId);
@@ -219,9 +257,15 @@ def handler(event, context):
 
         function loadSales() {
             document.getElementById("content").innerHTML = '<div class="loading">Loading marketplace...</div>';
-            fetch("/sales", { headers: { "Authorization": token } })
+            var endpoint = isGuest ? "/public-sales" : "/sales";
+            var headers = isGuest ? {} : { "Authorization": token };
+            fetch(endpoint, { headers: headers })
             .then(function(res) { return res.json(); })
             .then(function(response) {
+                // Handle AWS integration response format (body is a string)
+                if (response.body && typeof response.body === 'string') {
+                    response = JSON.parse(response.body);
+                }
                 var data = response.items || response.Items || response;
                 if (!Array.isArray(data)) data = [];
                 if (data.length === 0) {
@@ -244,8 +288,8 @@ def handler(event, context):
                     var status = item.Status || "";
                     var titleHash = item.TitleHash;
                     var currentHash = item.CurrentHash || item.TitleHash;
-                    var isOwnListing = (sellerId.toLowerCase() === email.toLowerCase() && status === "ForSale" && buyerId === "NONE");
-                    var youOwnThis = (buyerId.toLowerCase() === email.toLowerCase() && status === "Transferred");
+                    var isOwnListing = !isGuest && (sellerId.toLowerCase() === email.toLowerCase() && status === "ForSale" && buyerId === "NONE");
+                    var youOwnThis = !isGuest && (buyerId.toLowerCase() === email.toLowerCase() && status === "Transferred");
                     var validId = "valid-" + idx;
                     var cardClass = isOwnListing ? "own-listing" : (youOwnThis ? "owned-title" : "");
                     var badge = isOwnListing ? '<span class="own-listing-badge">Your Listing</span>' : (youOwnThis ? '<span class="owned-badge">You Own This</span>' : '');
@@ -262,9 +306,11 @@ def handler(event, context):
                     html += '<div class="detail-row"><span class="detail-label">Transfers</span><span class="detail-value">' + (item.TransferCount || 0) + '</span></div>';
                     html += '<div class="detail-row"><span class="detail-label">Status</span><span class="detail-value"><span class="status-badge status-' + status.toLowerCase() + '">' + status + '</span></span></div>';
                     html += '</div>';
-                    html += '<div class="hash-info hash-clickable" onclick="showHistoryModal(\'' + titleHash + '\', \'' + grainType + '\')"><div class="hash-label">Current Hash:</div><div class="hash-value">' + currentHash + '</div><div class="hash-hint">Click to see complete ownership history</div></div>';
+                    html += '<div class="hash-info hash-clickable" onclick="showHistoryModal(\'' + titleHash + '\', \'' + grainType + '\')"><div class="hash-label">Title ID:</div><div class="hash-value">' + currentHash + '</div><div class="hash-hint">Click to see complete ownership history</div></div>';
                     html += '<div style="margin-top:15px;">';
-                    if (isOwnListing) {
+                    if (isGuest) {
+                        html += '<button class="action-btn buy-btn" disabled title="Sign in to buy">Sign In to Buy</button>';
+                    } else if (isOwnListing) {
                         html += '<button class="action-btn buy-btn" disabled>Your Listing</button>';
                     } else if (youOwnThis) {
                         html += '<button class="action-btn buy-btn" disabled>You Own This</button>';
@@ -305,6 +351,7 @@ def handler(event, context):
         }
 
         function loadMyTitles() {
+            if (isGuest) { showGuestPrompt(); return; }
             document.getElementById("content").innerHTML = '<div class="loading">Loading your titles...</div>';
             fetch("/my-titles", { headers: { "Authorization": token } })
             .then(function(res) { return res.json(); })
@@ -339,7 +386,7 @@ def handler(event, context):
                     html += '<div class="detail-row"><span class="detail-label">Total Value</span><span class="detail-value">$' + totalValue.toLocaleString(undefined, {minimumFractionDigits:2}) + '</span></div>';
                     html += '<div class="detail-row"><span class="detail-label">Transfers</span><span class="detail-value">' + (item.TransferCount || 0) + '</span></div>';
                     html += '</div>';
-                    html += '<div class="hash-info hash-clickable" onclick="showHistoryModal(\'' + titleHash + '\', \'' + grainType + '\')"><div class="hash-label">Current Hash:</div><div class="hash-value">' + titleHash + '</div></div>';
+                    html += '<div class="hash-info hash-clickable" onclick="showHistoryModal(\'' + titleHash + '\', \'' + grainType + '\')"><div class="hash-label">Title ID:</div><div class="hash-value">' + titleHash + '</div></div>';
                     html += '<div style="margin-top:15px;">';
                     if (canRelist) {
                         html += '<button class="action-btn relist-btn" onclick="showRelistForm(\'' + titleHash + '\', \'' + grainType + '\', ' + quantity + ', ' + price + ')">Relist for Sale</button>';
@@ -354,6 +401,7 @@ def handler(event, context):
         }
 
         function showListSaleForm() {
+            if (isGuest) { showGuestPrompt(); return; }
             var html = '<div class="form-container"><h2 style="color:#2c5282;margin-bottom:25px;">List New Grain Title for Sale</h2>';
             html += '<div class="user-indicator"><span>&#x1F464;</span><span class="user-indicator-text">Listing as: ' + email + '</span></div>';
             html += '<form onsubmit="submitNewSale(event)">';
@@ -375,11 +423,20 @@ def handler(event, context):
 
         function submitNewSale(event) {
             event.preventDefault();
+            if (isGuest) { showGuestPrompt(); return; }
+            
+            // Disable button to prevent double-submit
+            var submitBtn = event.target.querySelector('button[type="submit"]');
+            if (submitBtn) {
+                submitBtn.disabled = true;
+                submitBtn.textContent = 'Processing...';
+            }
+            
             var data = { grain_type: document.getElementById("grainType").value, quantity: parseInt(document.getElementById("quantity").value), price: parseFloat(document.getElementById("price").value) };
             fetch("/titles", { method: "POST", headers: { "Content-Type": "application/json", "Authorization": token }, body: JSON.stringify(data) })
             .then(function(res) { return res.json(); })
             .then(function(result) {
-                if (result.error) { alert("Error: " + result.error); return; }
+                if (result.error) { alert("Error: " + result.error); if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = 'List for Sale'; } return; }
                 var html = '<div class="form-container"><div class="alert alert-success"><h3>Title Listed Successfully!</h3>';
                 html += '<p><strong>Seller:</strong> ' + (result.seller_id || email) + '</p>';
                 html += '<p><strong>Grain:</strong> ' + data.grain_type + '</p>';
@@ -389,10 +446,11 @@ def handler(event, context):
                 html += '<div class="form-actions"><button class="nav-btn btn-primary" onclick="loadSales()">View Marketplace</button><button class="nav-btn btn-success" onclick="showListSaleForm()">List Another</button></div></div>';
                 document.getElementById("content").innerHTML = html;
             })
-            .catch(function(err) { alert("Error: " + err.message); });
+            .catch(function(err) { alert("Error: " + err.message); if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = 'List for Sale'; } });
         }
 
         function showBuyForm(titleHash, grainType, quantity, price) {
+            if (isGuest) { showGuestPrompt(); return; }
             var totalValue = quantity * price;
             var html = '<div class="form-container"><h2 style="color:#2c5282;margin-bottom:25px;">Purchase Title</h2>';
             html += '<div class="user-indicator"><span>&#x1F6D2;</span><span class="user-indicator-text">Buying as: ' + email + '</span></div>';
@@ -400,15 +458,24 @@ def handler(event, context):
             html += '<p><strong>Price:</strong> $' + price.toFixed(2) + ' per bushel</p>';
             html += '<p><strong>Total Cost:</strong> $' + totalValue.toLocaleString(undefined, {minimumFractionDigits:2}) + '</p></div>';
             html += '<div class="hash-info"><div class="hash-label">Title Hash:</div><div class="hash-value">' + titleHash + '</div></div>';
-            html += '<div class="form-actions"><button class="nav-btn btn-success" onclick="submitPurchase(\'' + titleHash + '\')">Confirm Purchase</button><button class="nav-btn btn-secondary" onclick="loadSales()">Cancel</button></div></div>';
+            html += '<div class="form-actions"><button class="nav-btn btn-success" id="confirmBuyBtn" onclick="submitPurchase(\'' + titleHash + '\')">Confirm Purchase</button><button class="nav-btn btn-secondary" onclick="loadSales()">Cancel</button></div></div>';
             document.getElementById("content").innerHTML = html;
         }
 
         function submitPurchase(titleHash) {
+            if (isGuest) { showGuestPrompt(); return; }
+            
+            // Disable button to prevent double-submit
+            var btn = document.getElementById("confirmBuyBtn");
+            if (btn) {
+                btn.disabled = true;
+                btn.textContent = 'Processing...';
+            }
+            
             fetch("/transfer-title", { method: "POST", headers: { "Content-Type": "application/json", "Authorization": token }, body: JSON.stringify({ title_hash: titleHash }) })
             .then(function(res) { return res.json(); })
             .then(function(result) {
-                if (result.error) { alert("Error: " + result.error); return; }
+                if (result.error) { alert("Error: " + result.error); if (btn) { btn.disabled = false; btn.textContent = 'Confirm Purchase'; } return; }
                 var html = '<div class="form-container"><div class="alert alert-success"><h3>Title Purchased Successfully!</h3>';
                 html += '<p><strong>Buyer:</strong> ' + (result.buyer_id || email) + '</p>';
                 html += '<p><strong>Previous Owner:</strong> ' + (result.seller_id || "Unknown") + '</p>';
@@ -417,10 +484,11 @@ def handler(event, context):
                 html += '<div class="form-actions"><button class="nav-btn btn-purple" onclick="loadMyTitles()">View My Titles</button><button class="nav-btn btn-primary" onclick="loadSales()">Back to Marketplace</button></div></div>';
                 document.getElementById("content").innerHTML = html;
             })
-            .catch(function(err) { alert("Error: " + err.message); });
+            .catch(function(err) { alert("Error: " + err.message); if (btn) { btn.disabled = false; btn.textContent = 'Confirm Purchase'; } });
         }
 
         function showRelistForm(titleHash, grainType, quantity, currentPrice) {
+            if (isGuest) { showGuestPrompt(); return; }
             var defaultPrice = grainPrices[grainType] || currentPrice;
             var html = '<div class="form-container"><h2 style="color:#2c5282;margin-bottom:25px;">Relist Title for Sale</h2>';
             html += '<div class="user-indicator"><span>&#x1F4B0;</span><span class="user-indicator-text">Listing as: ' + email + '</span></div>';
@@ -435,20 +503,31 @@ def handler(event, context):
 
         function submitRelist(event, titleHash) {
             event.preventDefault();
+            if (isGuest) { showGuestPrompt(); return; }
+            
+            // Disable button to prevent double-submit
+            var submitBtn = event.target.querySelector('button[type="submit"]');
+            if (submitBtn) {
+                submitBtn.disabled = true;
+                submitBtn.textContent = 'Processing...';
+            }
+            
             var data = { title_hash: titleHash, new_price: parseFloat(document.getElementById("newPrice").value) };
             fetch("/relist-title", { method: "POST", headers: { "Content-Type": "application/json", "Authorization": token }, body: JSON.stringify(data) })
             .then(function(res) { return res.json(); })
             .then(function(result) {
-                if (result.error) { alert("Error: " + result.error); return; }
+                if (result.error) { alert("Error: " + result.error); if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = 'List for Sale'; } return; }
                 var html = '<div class="form-container"><div class="alert alert-success"><h3>Title Listed for Sale!</h3>';
                 html += '<p><strong>New Price:</strong> $' + data.new_price.toFixed(2) + ' per bushel</p></div>';
                 html += '<div class="form-actions"><button class="nav-btn btn-primary" onclick="loadSales()">View Marketplace</button><button class="nav-btn btn-purple" onclick="loadMyTitles()">View My Titles</button></div></div>';
                 document.getElementById("content").innerHTML = html;
             })
-            .catch(function(err) { alert("Error: " + err.message); });
+            .catch(function(err) { alert("Error: " + err.message); if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = 'List for Sale'; } });
         }
 
         function logout() { sessionStorage.clear(); window.location.href = "/"; }
+        
+        function signInFromGuest() { sessionStorage.clear(); window.location.href = "/"; }
     </script>
 </body>
 </html>'''

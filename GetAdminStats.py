@@ -96,19 +96,13 @@ def lambda_handler(event, context):
         # Count by status
         for_sale = sum(1 for t in all_titles if t.get('Status') == 'ForSale')
         transferred = sum(1 for t in all_titles if t.get('Status') == 'Transferred')
+        listed = sum(1 for t in all_titles if t.get('Status') == 'Listed')
         
-        # Count by grain type
+        # Count by grain type (all titles for historical record)
         grain_counts = {}
         for title in all_titles:
             grain = title.get('GrainType', 'Unknown')
             grain_counts[grain] = grain_counts.get(grain, 0) + 1
-        
-        # Total quantity and value
-        total_quantity = sum(int(t.get('Quantity', 0)) for t in all_titles)
-        total_value = sum(
-            float(t.get('Price', 0)) * int(t.get('Quantity', 0)) 
-            for t in all_titles
-        )
         
         # Count transfers
         total_transfers = sum(int(t.get('TransferCount', 0)) for t in all_titles)
@@ -122,24 +116,41 @@ def lambda_handler(event, context):
                 unique_users.add(title['SellerID'])
         
         # Count original titles (TransferCount = 0)
-        original_titles = sum(1 for t in all_titles if int(t.get('TransferCount', 0)) == 0)
+        original_titles_count = sum(1 for t in all_titles if int(t.get('TransferCount', 0)) == 0)
+        
+        # Volume stats - ONLY count ForSale items to avoid double-counting
+        # Each transfer creates a new record, so we only want current listings
+        for_sale_titles = [t for t in all_titles if t.get('Status') == 'ForSale']
+        
+        total_quantity = sum(int(t.get('Quantity', 0)) for t in for_sale_titles)
+        total_value = sum(
+            float(t.get('Price', 0)) * int(t.get('Quantity', 0)) 
+            for t in for_sale_titles
+        )
+        
+        # Simple average of per-bushel prices (not weighted by quantity)
+        avg_price = (
+            sum(float(t.get('Price', 0)) for t in for_sale_titles) / len(for_sale_titles)
+            if for_sale_titles else 0
+        )
         
         stats = {
             'system_stats': {
                 'total_titles': total_titles,
-                'original_titles': original_titles,
+                'original_titles': original_titles_count,
                 'total_transfers': total_transfers,
                 'unique_users': len(unique_users)
             },
             'status_breakdown': {
                 'for_sale': for_sale,
-                'transferred': transferred
+                'transferred': transferred,
+                'listed': listed
             },
             'grain_type_breakdown': grain_counts,
             'volume_stats': {
                 'total_bushels': total_quantity,
                 'total_value_usd': round(total_value, 2),
-                'average_price_per_bushel': round(total_value / total_quantity, 2) if total_quantity > 0 else 0
+                'average_price_per_bushel': round(avg_price, 2)
             },
             'requested_by': user_info['email'],
             'timestamp': event.get('requestContext', {}).get('requestTimeEpoch', 0)

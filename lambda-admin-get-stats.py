@@ -47,39 +47,46 @@ def get_user_info(event):
 
 def lambda_handler(event, context):
     try:
-        # Extract and verify user is admin
+        # Check if this is a public/guest request (no auth required for read-only stats)
+        path = event.get('path', '') or event.get('resource', '')
+        is_public = 'public' in path.lower()
+        
+        # Extract and verify user is admin (skip for public endpoint)
         user_info = get_user_info(event)
         
-        if not user_info:
-            return {
-                'statusCode': 401,
-                'headers': {
-                    'Content-Type': 'application/json',
-                    'Access-Control-Allow-Origin': '*',
-                    'Access-Control-Allow-Headers': 'Content-Type,Authorization',
-                    'Access-Control-Allow-Methods': 'OPTIONS,GET'
-                },
-                'body': json.dumps({'error': 'Unauthorized: Could not extract user information'})
-            }
-        
-        # CRITICAL: Check if user is admin
-        if not user_info['is_admin']:
-            print(f"Access denied for non-admin user: {user_info['email']}")
-            return {
-                'statusCode': 403,
-                'headers': {
-                    'Content-Type': 'application/json',
-                    'Access-Control-Allow-Origin': '*',
-                    'Access-Control-Allow-Headers': 'Content-Type,Authorization',
-                    'Access-Control-Allow-Methods': 'OPTIONS,GET'
-                },
-                'body': json.dumps({
-                    'error': 'Forbidden: Admin access required',
-                    'user_role': user_info['role']
-                })
-            }
-        
-        print(f"Admin access granted for: {user_info['email']}")
+        if not is_public:
+            if not user_info:
+                return {
+                    'statusCode': 401,
+                    'headers': {
+                        'Content-Type': 'application/json',
+                        'Access-Control-Allow-Origin': '*',
+                        'Access-Control-Allow-Headers': 'Content-Type,Authorization',
+                        'Access-Control-Allow-Methods': 'OPTIONS,GET'
+                    },
+                    'body': json.dumps({'error': 'Unauthorized: Could not extract user information'})
+                }
+            
+            # CRITICAL: Check if user is admin
+            if not user_info['is_admin']:
+                print(f"Access denied for non-admin user: {user_info['email']}")
+                return {
+                    'statusCode': 403,
+                    'headers': {
+                        'Content-Type': 'application/json',
+                        'Access-Control-Allow-Origin': '*',
+                        'Access-Control-Allow-Headers': 'Content-Type,Authorization',
+                        'Access-Control-Allow-Methods': 'OPTIONS,GET'
+                    },
+                    'body': json.dumps({
+                        'error': 'Forbidden: Admin access required',
+                        'user_role': user_info['role']
+                    })
+                }
+            
+            print(f"Admin access granted for: {user_info['email']}")
+        else:
+            print("Public guest access for statistics")
         
         # Scan all titles to get statistics
         response = titles_table.scan()
@@ -96,19 +103,13 @@ def lambda_handler(event, context):
         # Count by status
         for_sale = sum(1 for t in all_titles if t.get('Status') == 'ForSale')
         transferred = sum(1 for t in all_titles if t.get('Status') == 'Transferred')
+        listed = sum(1 for t in all_titles if t.get('Status') == 'Listed')
         
-        # Count by grain type
+        # Count by grain type (all titles for historical record)
         grain_counts = {}
         for title in all_titles:
             grain = title.get('GrainType', 'Unknown')
             grain_counts[grain] = grain_counts.get(grain, 0) + 1
-        
-        # Total quantity and value
-        total_quantity = sum(int(t.get('Quantity', 0)) for t in all_titles)
-        total_value = sum(
-            float(t.get('Price', 0)) * int(t.get('Quantity', 0)) 
-            for t in all_titles
-        )
         
         # Count transfers
         total_transfers = sum(int(t.get('TransferCount', 0)) for t in all_titles)
@@ -122,26 +123,43 @@ def lambda_handler(event, context):
                 unique_users.add(title['SellerID'])
         
         # Count original titles (TransferCount = 0)
-        original_titles = sum(1 for t in all_titles if int(t.get('TransferCount', 0)) == 0)
+        original_titles_count = sum(1 for t in all_titles if int(t.get('TransferCount', 0)) == 0)
+        
+        # Volume stats - ONLY count ForSale items to avoid double-counting
+        # Each transfer creates a new record, so we only want current listings
+        for_sale_titles = [t for t in all_titles if t.get('Status') == 'ForSale']
+        
+        total_quantity = sum(int(t.get('Quantity', 0)) for t in for_sale_titles)
+        total_value = sum(
+            float(t.get('Price', 0)) * int(t.get('Quantity', 0)) 
+            for t in for_sale_titles
+        )
+        
+        # Simple average of per-bushel prices (not weighted by quantity)
+        avg_price = (
+            sum(float(t.get('Price', 0)) for t in for_sale_titles) / len(for_sale_titles)
+            if for_sale_titles else 0
+        )
         
         stats = {
             'system_stats': {
                 'total_titles': total_titles,
-                'original_titles': original_titles,
+                'original_titles': original_titles_count,
                 'total_transfers': total_transfers,
                 'unique_users': len(unique_users)
             },
             'status_breakdown': {
                 'for_sale': for_sale,
-                'transferred': transferred
+                'transferred': transferred,
+                'listed': listed
             },
             'grain_type_breakdown': grain_counts,
             'volume_stats': {
                 'total_bushels': total_quantity,
                 'total_value_usd': round(total_value, 2),
-                'average_price_per_bushel': round(total_value / total_quantity, 2) if total_quantity > 0 else 0
+                'average_price_per_bushel': round(avg_price, 2)
             },
-            'requested_by': user_info['email'],
+            'requested_by': user_info['email'] if user_info else 'Guest',
             'timestamp': event.get('requestContext', {}).get('requestTimeEpoch', 0)
         }
         
